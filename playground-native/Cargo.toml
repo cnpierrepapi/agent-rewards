@@ -7,10 +7,10 @@ edition = "2021"
 # them one by one.
 rust-version = "1.75.0"
 
-# Stand alone — NOT part of the root Anchor workspace. resolver "3" = MSRV-aware
-# (needs a system Cargo >= 1.84 to generate the lock).
+# Stand alone — NOT part of the root Anchor workspace. (MSRV-aware resolution is
+# enabled in .cargo/config.toml, not via `resolver = "3"`, which the SBF toolchain's
+# older Cargo can't parse.)
 [workspace]
-resolver = "3"
 
 [lib]
 crate-type = ["cdylib", "lib"]

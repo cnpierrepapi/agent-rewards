@@ -1,0 +1,7 @@
+# Enable the MSRV-aware resolver via config instead of `resolver = "3"` in Cargo.toml
+# (the SBF toolchain's older Cargo can't parse resolver "3", but it harmlessly ignores
+# this unknown config key). A Cargo >= 1.84 honors it: combined with package.rust-version
+# = "1.75.0", any dependency that needs a newer Rust (the edition2024 crates) is downgraded
+# to a compatible version instead of breaking the build.
+[resolver]
+incompatible-rust-versions = "fallback"
