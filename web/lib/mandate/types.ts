@@ -1,34 +1,29 @@
 // The client seam. The app talks to this, never to Solana directly. Today the
-// in-memory MockMandateClient; later a SolanaMandateClient backed by the deployed
-// standing_order program — same shape, nothing else changes.
+// in-memory MockSubscriptionClient; later a SolanaSubscriptionClient backed by the
+// deployed standing_order program — same shape, nothing else changes.
 
-export interface Pull {
-  nonce: number;
-  label: string;
+export interface Charge {
+  period: number;
   amount: number; // base units
-  remaining: number; // escrow after this pull
+  remaining: number; // escrow after this charge
   at: string;
 }
 
-export interface MandateState {
+export interface SubscriptionState {
   active: boolean;
-  funded: number; // total ever funded
-  escrowBalance: number; // remaining in escrow
-  providerEarned: number; // total pulled by the provider
-  maxPerPeriod: number;
-  spentThisPeriod: number;
-  periodSecs: number;
-  secondsUntilReset: number;
-  lowBalanceThreshold: number;
-  lowBalance: boolean;
-  pulls: Pull[]; // newest first
+  price: number;
+  escrowBalance: number;
+  monthsRemaining: number; // floor(escrow / price)
+  periodsCharged: number;
+  providerReceived: number;
+  atRisk: boolean; // escrow cannot cover more than one more period
+  charges: Charge[]; // newest first
 }
 
-export interface MandateClient {
-  getState(): Promise<MandateState>;
-  fund(amount: number): Promise<MandateState>;
-  // Throws "RateLimitExceeded" | "InsufficientFunds" | "MandateInactive" | "InvalidAmount".
-  pull(amount: number, label: string): Promise<Pull>;
-  cancel(): Promise<{ refunded: number }>;
+export interface SubscriptionClient {
+  getState(): Promise<SubscriptionState>;
+  fund(amount: number): Promise<SubscriptionState>;
+  charge(): Promise<Charge>; // throws "Inactive" | "InsufficientFunds"
+  cancel(): Promise<{ refunded: number; monthsRefunded: number }>;
   reset(): Promise<void>;
 }

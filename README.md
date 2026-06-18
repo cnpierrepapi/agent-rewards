@@ -1,9 +1,10 @@
 # Standing Order — the subscription that can't overcharge you
 
-A trustless standing order (recurring payment mandate) implemented as a Solana program.
-You fund an escrow once and authorise a provider to pull payment over time. The **program**,
-not the merchant, enforces a per-period spend cap, keeps custody of your funds, emits a
-low-balance notification, and lets you cancel and reclaim the remainder at any instant.
+A trustless recurring subscription implemented as a Solana program: the one you forgot to cancel,
+except you get your unused months back. You fund an escrow with one or more periods up front and
+authorise a provider to collect a fixed `price` per period. The **program**, not the merchant,
+enforces the cadence and amount, keeps custody of your prepaid funds, and lets you cancel and reclaim
+every period you funded but never used.
 
 > **Demo client:** an autonomous outreach agent acts as the "merchant". It fetches real Warsaw
 > businesses, drafts per-industry pitches with Claude Sonnet, and meters its work by pulling tiny
@@ -32,10 +33,10 @@ should roll over, not expire), and reclaim every cent you did not use the moment
 | Friction | On-chain guarantee |
 |----------|--------------------|
 | Custody  | Funds sit in a **PDA escrow** the payer controls; the provider never holds them. |
-| Overcharging | `pull` reverts if it exceeds `max_per_period` — the cap is **enforced by the program**, not the merchant. |
-| Pay for what you use | The provider pulls incrementally as it serves you; the **unused balance stays in your escrow and rolls over** (it never expires). |
-| Cancelling | `cancel` deactivates the mandate and **refunds 100% of the unused remainder in one transaction**, permissionlessly. The Grammarly $30 you never used would come straight back. |
-| Visibility | Every `pull` emits `Charged`; crossing the threshold emits **`LowBalance`** (the on-chain notification). |
+| Overcharging | `charge` collects the fixed `price` **at most once per `period_secs`** — the cadence and amount are enforced by the program, not the merchant. |
+| Forgotten subscription | It can never take more than you funded; charges simply stop when the escrow runs dry. |
+| Cancelling | `cancel` deactivates the subscription and **refunds every funded-but-uncharged period in one transaction**. The Grammarly months you never used come straight back. |
+| Visibility | Every `charge` emits `Charged`; when the escrow can't cover the next period it emits **`RenewalAtRisk`**, and `cancel` emits `SubscriptionCancelled`. |
 
 Permissionless: anyone can open a mandate; a provider is just a pubkey. Token-native: settlement
 is in USDC. Trustless where it counts: the payer never has to trust the merchant on price, cap,
@@ -43,15 +44,15 @@ custody, or cancellation.
 
 ## Account model
 
-- **`Mandate`** (PDA, seeds `["mandate", owner, provider]`) — owner, provider, mint, `max_per_period`,
-  `period_secs`, `spent_this_period`, `period_start`, `low_balance_threshold`, `total_pulled`, `active`.
-- **`escrow`** — an associated token account owned by the `Mandate` PDA; holds the USDC.
-- Instructions: `open_mandate`, `fund`, `pull` (provider-signed, capped, emits events), `cancel`
-  (owner-signed, refunds + deactivates).
-- Events: `Charged`, `LowBalance`, `MandateCancelled`.
+- **`Subscription`** (PDA, seeds `["sub", owner, provider]`) — owner, provider, mint, `price`,
+  `period_secs`, `next_charge_ts`, `periods_charged`, `active`.
+- **`escrow`** — an associated token account owned by the `Subscription` PDA; holds the prepaid USDC.
+- Instructions: `open_subscription`, `fund` (deposit periods ahead), `charge` (provider-signed, one
+  period per `period_secs`, emits events), `cancel` (owner-signed, refunds unused periods + deactivates).
+- Events: `Charged`, `RenewalAtRisk`, `SubscriptionCancelled`.
 
-The rate window is a simple `period_start + period_secs` roll, reset lazily on the first `pull`
-after a period elapses — no cranks, no clock keeper.
+The cadence is a `next_charge_ts` gate advanced by `period_secs` on each charge — no cranks, no clock
+keeper.
 
 ## Tradeoffs & constraints (honest scope)
 
@@ -59,20 +60,21 @@ after a period elapses — no cranks, no clock keeper.
   The provider still reports *what* was delivered (a metered unit, a task). The chain bounds how
   much they can take; it does not verify the off-chain service. Fully removing that trust would
   require the service itself to be on-chain-verifiable.
-- **Per-period cap, not per-pull pricing.** Minimal by design: the cap is the safety rail; unit
-  pricing is the provider's concern. (Zero feature-creep — see the challenge brief.)
-- **Lazy window reset.** The period only rolls when a `pull` happens after it elapses; there is no
-  background process. Correct for this use case, and cheaper than a crank.
-- **One mandate per (owner, provider) pair.** Deterministic PDA; a second provider is a second mandate.
+- **No on-chain scheduler.** Solana programs can't self-trigger; the provider (or a keeper) sends the
+  `charge` transaction each period. The program guarantees it can't be early, double-charged, or over
+  the price — not that it fires on its own. This is honest and standard for Solana.
+- **Fixed price per period from prepaid escrow.** Minimal by design (zero feature-creep). The only
+  capital at risk is what the payer funded, and `cancel` returns the unused part.
+- **One subscription per (owner, provider) pair.** Deterministic PDA; a second provider is a second subscription.
 
 ## Devnet
 
 - Program ID: `<filled after deploy>`
 - Example transactions:
   - open + fund: `<tx link>`
-  - pull (within cap): `<tx link>`
-  - pull rejected (over cap): `<tx link>`
-  - cancel + refund: `<tx link>`
+  - charge (period 1): `<tx link>`
+  - charge rejected (not due yet): `<tx link>`
+  - cancel + refund unused months: `<tx link>`
 
 ## Run it
 
@@ -81,7 +83,7 @@ after a period elapses — no cranks, no clock keeper.
 npm install
 anchor build
 anchor keys sync     # set the real program id
-anchor test          # opens, funds, pulls within/over the cap, rejects intruder, cancels+refunds
+anchor test          # opens, funds, charges per period, rejects early/empty/unauthorised, cancels+refunds
 anchor deploy --provider.cluster devnet
 ```
 

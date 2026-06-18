@@ -1,48 +1,39 @@
-import { MandateClient, MandateState } from "@/lib/mandate/types";
-import { WORK } from "@/lib/mandate/schedule";
+import { SubscriptionClient, SubscriptionState } from "@/lib/mandate/types";
 import { findLeads, industries, Lead } from "./leads";
 import { draftTemplate, Draft } from "./draft";
 
-export interface WorkResult {
-  label: string;
-  amount: number;
-  status: "paid" | "RateLimitExceeded" | "InsufficientFunds" | "MandateInactive" | string;
+export interface PeriodResult {
+  charged: boolean;
+  reason?: string; // when charged === false
+  period?: number;
+  amount?: number;
+  city?: string;
+  leads?: Lead[];
+  drafts?: Draft[];
+  state: SubscriptionState;
 }
 
-export interface RunResult {
-  city: string;
-  leads: Lead[];
-  drafts: Draft[];
-  results: WorkResult[];
-  state: MandateState;
-}
+// One billing period. The provider only delivers work for a period it was paid for.
+export async function runPeriod(client: SubscriptionClient): Promise<PeriodResult> {
+  let charge;
+  try {
+    charge = await client.charge();
+  } catch (e) {
+    return { charged: false, reason: (e as Error).message, state: await client.getState() };
+  }
 
-// One agent cycle: it tries to get paid for each unit of work by pulling from the
-// mandate. The mandate (not the agent) decides whether the pull is allowed.
-export async function runAgent(client: MandateClient): Promise<RunResult> {
+  // Paid -> the agent does this period's work (find Warsaw leads, draft Sonnet pitches).
   const leads = findLeads();
   const inds = industries();
-  const results: WorkResult[] = [];
-
-  await tryPull(client, WORK.FIND_LEADS.amount, `Find leads (${leads.length} Warsaw businesses)`, results);
-
   const drafts = await Promise.all(inds.map((i) => draftTemplate(i, findLeads(i))));
-  for (const d of drafts) {
-    await tryPull(client, WORK.DRAFT.amount, `Draft pitch: ${d.industry}`, results);
-  }
 
-  for (const ind of inds) {
-    await tryPull(client, WORK.SEND_BATCH.amount, `Send batch + follow-up: ${ind}`, results);
-  }
-
-  return { city: leads[0]?.city ?? "Warsaw", leads, drafts, results, state: await client.getState() };
-}
-
-async function tryPull(client: MandateClient, amount: number, label: string, out: WorkResult[]) {
-  try {
-    await client.pull(amount, label);
-    out.push({ label, amount, status: "paid" });
-  } catch (e) {
-    out.push({ label, amount, status: (e as Error).message });
-  }
+  return {
+    charged: true,
+    period: charge.period,
+    amount: charge.amount,
+    city: leads[0]?.city ?? "Warsaw",
+    leads,
+    drafts,
+    state: await client.getState(),
+  };
 }

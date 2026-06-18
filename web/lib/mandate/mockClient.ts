@@ -1,45 +1,29 @@
-import { MandateClient, MandateState, Pull } from "./types";
-import { MANDATE } from "./schedule";
+import { SubscriptionClient, SubscriptionState, Charge } from "./types";
+import { SUB } from "./schedule";
 
 // In-memory mirror of the on-chain standing_order program:
-//   fund   -> add to escrow
-//   pull   -> provider takes <= maxPerPeriod per window, <= escrow balance
-//   cancel -> refund remainder + deactivate
-// The per-period cap is the "cannot overcharge you" guarantee, enforced here exactly
-// as the program enforces it.
-class MockMandateClient implements MandateClient {
+//   fund   -> add periods to the escrow
+//   charge -> provider collects one period's price (fails if escrow can't cover it)
+//   cancel -> refund every funded-but-uncharged period
+// Each charge() here represents one billing period passing.
+class MockSubscriptionClient implements SubscriptionClient {
   private active = true;
-  private funded = 0;
   private escrow = 0;
-  private totalPulled = 0;
-  private spent = 0;
-  private periodStartMs = Date.now();
-  private nextNonce = 1;
-  private pulls: Pull[] = [];
-  private cfg = MANDATE;
+  private periodsCharged = 0;
+  private providerReceived = 0;
+  private charges: Charge[] = [];
+  private price = SUB.price;
 
-  private rollWindow() {
-    if (Date.now() - this.periodStartMs >= this.cfg.periodSecs * 1000) {
-      this.periodStartMs = Date.now();
-      this.spent = 0;
-    }
-  }
-
-  private snapshot(): MandateState {
-    this.rollWindow();
-    const elapsed = (Date.now() - this.periodStartMs) / 1000;
+  private snapshot(): SubscriptionState {
     return {
       active: this.active,
-      funded: this.funded,
+      price: this.price,
       escrowBalance: this.escrow,
-      providerEarned: this.totalPulled,
-      maxPerPeriod: this.cfg.maxPerPeriod,
-      spentThisPeriod: this.spent,
-      periodSecs: this.cfg.periodSecs,
-      secondsUntilReset: Math.max(0, Math.ceil(this.cfg.periodSecs - elapsed)),
-      lowBalanceThreshold: this.cfg.lowBalanceThreshold,
-      lowBalance: this.active && this.escrow < this.cfg.lowBalanceThreshold,
-      pulls: [...this.pulls].reverse(),
+      monthsRemaining: Math.floor(this.escrow / this.price),
+      periodsCharged: this.periodsCharged,
+      providerReceived: this.providerReceived,
+      atRisk: this.active && this.escrow < this.price * 2,
+      charges: [...this.charges].reverse(),
     };
   }
 
@@ -49,50 +33,43 @@ class MockMandateClient implements MandateClient {
 
   async fund(amount: number) {
     if (amount <= 0) throw new Error("InvalidAmount");
-    this.funded += amount;
     this.escrow += amount;
     return this.snapshot();
   }
 
-  async pull(amount: number, label: string): Promise<Pull> {
-    if (!this.active) throw new Error("MandateInactive");
-    if (amount <= 0) throw new Error("InvalidAmount");
-    this.rollWindow();
-    if (this.spent + amount > this.cfg.maxPerPeriod) throw new Error("RateLimitExceeded");
-    if (this.escrow < amount) throw new Error("InsufficientFunds");
-
-    this.escrow -= amount;
-    this.spent += amount;
-    this.totalPulled += amount;
-    const pull: Pull = {
-      nonce: this.nextNonce++,
-      label,
-      amount,
+  async charge(): Promise<Charge> {
+    if (!this.active) throw new Error("Inactive");
+    if (this.escrow < this.price) throw new Error("InsufficientFunds");
+    this.escrow -= this.price;
+    this.periodsCharged += 1;
+    this.providerReceived += this.price;
+    const c: Charge = {
+      period: this.periodsCharged,
+      amount: this.price,
       remaining: this.escrow,
       at: new Date().toISOString(),
     };
-    this.pulls.push(pull);
-    return pull;
+    this.charges.push(c);
+    return c;
   }
 
   async cancel() {
     const refunded = this.escrow;
+    const monthsRefunded = Math.floor(this.escrow / this.price);
     this.escrow = 0;
     this.active = false;
-    return { refunded };
+    return { refunded, monthsRefunded };
   }
 
   async reset() {
     this.active = true;
-    this.funded = 0;
     this.escrow = 0;
-    this.totalPulled = 0;
-    this.spent = 0;
-    this.periodStartMs = Date.now();
-    this.nextNonce = 1;
-    this.pulls = [];
+    this.periodsCharged = 0;
+    this.providerReceived = 0;
+    this.charges = [];
   }
 }
 
-const g = globalThis as unknown as { __mandate?: MandateClient };
-export const mandate: MandateClient = g.__mandate ?? (g.__mandate = new MockMandateClient());
+const g = globalThis as unknown as { __sub?: SubscriptionClient };
+export const subscription: SubscriptionClient =
+  g.__sub ?? (g.__sub = new MockSubscriptionClient());

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { mandate } from "@/lib/mandate/mockClient";
+import { subscription } from "@/lib/mandate/mockClient";
 
 export async function POST() {
-  await mandate.reset();
-  return NextResponse.json(await mandate.getState());
+  await subscription.reset();
+  return NextResponse.json(await subscription.getState());
 }

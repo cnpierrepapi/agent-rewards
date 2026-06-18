@@ -11,137 +11,136 @@ import {
 import { Keypair, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { assert } from "chai";
 
-describe("standing_order", () => {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("standing_order (recurring subscription)", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.StandingOrder as Program<StandingOrder>;
   const connection = provider.connection;
-  const payer = provider.wallet as anchor.Wallet; // the "owner" / customer
+  const payer = provider.wallet as anchor.Wallet; // the customer / owner
 
-  const merchant = Keypair.generate(); // the authorised provider
-  const intruder = Keypair.generate(); // a different keypair that must be rejected
+  const merchant = Keypair.generate(); // authorised provider
+  const intruder = Keypair.generate();
 
-  // 0.5 USDC per period, a long period so it does not reset mid-test.
-  const MAX_PER_PERIOD = 500_000;
-  const PERIOD_SECS = 100_000;
-  const LOW_THRESHOLD = 600_000; // triggers LowBalance while > 0.4 USDC remains
+  const PRICE = 100_000; // 0.1 USDC / period
+  const PERIOD_SECS = 1; // short so the window elapses during the test
 
   let mint: PublicKey;
   let ownerAta: PublicKey;
-  let mandate: PublicKey;
+  let sub: PublicKey;
   let escrow: PublicKey;
   let merchantAta: PublicKey;
 
   const balOf = async (a: PublicKey) => (await getAccount(connection, a)).amount;
 
   before(async () => {
-    const sig = await connection.requestAirdrop(merchant.publicKey, LAMPORTS_PER_SOL);
-    await connection.confirmTransaction(sig, "confirmed");
+    const s = await connection.requestAirdrop(merchant.publicKey, LAMPORTS_PER_SOL);
+    await connection.confirmTransaction(s, "confirmed");
 
     mint = await createMint(connection, payer.payer, payer.publicKey, null, 6);
     ownerAta = (
       await getOrCreateAssociatedTokenAccount(connection, payer.payer, mint, payer.publicKey)
     ).address;
-    await mintTo(connection, payer.payer, mint, ownerAta, payer.publicKey, 10_000_000); // 10 USDC
+    await mintTo(connection, payer.payer, mint, ownerAta, payer.publicKey, 10_000_000);
 
-    [mandate] = PublicKey.findProgramAddressSync(
-      [Buffer.from("mandate"), payer.publicKey.toBuffer(), merchant.publicKey.toBuffer()],
+    [sub] = PublicKey.findProgramAddressSync(
+      [Buffer.from("sub"), payer.publicKey.toBuffer(), merchant.publicKey.toBuffer()],
       program.programId
     );
-    escrow = getAssociatedTokenAddressSync(mint, mandate, true);
+    escrow = getAssociatedTokenAddressSync(mint, sub, true);
     merchantAta = (
       await getOrCreateAssociatedTokenAccount(connection, payer.payer, mint, merchant.publicKey)
     ).address;
   });
 
-  it("opens a mandate and funds it once", async () => {
-    await program.methods
-      .openMandate(new BN(MAX_PER_PERIOD), new BN(PERIOD_SECS), new BN(LOW_THRESHOLD))
-      .accounts({ owner: payer.publicKey, provider: merchant.publicKey, mint })
-      .rpc();
-
-    await program.methods
-      .fund(new BN(1_000_000)) // 1 USDC
-      .accounts({ owner: payer.publicKey, ownerTokenAccount: ownerAta })
-      .rpc();
-
-    assert.equal((await balOf(escrow)).toString(), "1000000");
-    const m = await program.account.mandate.fetch(mandate);
-    assert.ok(m.active);
-    assert.ok(m.provider.equals(merchant.publicKey));
-  });
-
-  const pull = (amount: number, signer = merchant) =>
+  const charge = (signer = merchant) =>
     program.methods
-      .pull(new BN(amount))
-      .accounts({ provider: signer.publicKey, mandate, providerTokenAccount: merchantAta })
+      .charge()
+      .accounts({ provider: signer.publicKey, subscription: sub, providerTokenAccount: merchantAta })
       .signers([signer])
       .rpc();
 
-  it("lets the provider pull within the cap", async () => {
-    await pull(200_000); // 0.2 USDC
-    assert.equal((await balOf(merchantAta)).toString(), "200000");
-    assert.equal((await balOf(escrow)).toString(), "800000");
+  it("opens a subscription and funds 3 periods", async () => {
+    await program.methods
+      .openSubscription(new BN(PRICE), new BN(PERIOD_SECS))
+      .accounts({ owner: payer.publicKey, provider: merchant.publicKey, mint })
+      .rpc();
+    await program.methods
+      .fund(new BN(3 * PRICE))
+      .accounts({ owner: payer.publicKey, ownerTokenAccount: ownerAta })
+      .rpc();
+    assert.equal((await balOf(escrow)).toString(), (3 * PRICE).toString());
   });
 
-  it("rejects a pull that would exceed the per-period cap", async () => {
+  it("charges the first period", async () => {
+    await charge();
+    assert.equal((await balOf(merchantAta)).toString(), PRICE.toString());
+    assert.equal((await balOf(escrow)).toString(), (2 * PRICE).toString());
+    const s = await program.account.subscription.fetch(sub);
+    assert.equal(s.periodsCharged.toString(), "1");
+  });
+
+  it("rejects a second charge in the same period", async () => {
     try {
-      await pull(400_000); // 0.2 + 0.4 = 0.6 > 0.5 cap
-      assert.fail("should have hit the rate cap");
+      await charge();
+      assert.fail("should not be due yet");
     } catch (e: any) {
-      assert.include(JSON.stringify(e), "RateLimitExceeded");
+      assert.include(JSON.stringify(e), "RenewalNotDue");
     }
   });
 
-  it("allows a further pull up to the cap, then blocks once exhausted", async () => {
-    await pull(300_000); // total 0.5 == cap
-    assert.equal((await balOf(merchantAta)).toString(), "500000");
+  it("charges later periods once the window elapses, then lapses when empty", async () => {
+    await sleep(1100);
+    await charge(); // period 2
+    await sleep(1100);
+    await charge(); // period 3 -> escrow now 0
+    assert.equal((await balOf(escrow)).toString(), "0");
+
+    await sleep(1100);
     try {
-      await pull(1); // cap fully spent this period
-      assert.fail("should be blocked at the cap");
+      await charge(); // due, but nothing to pull -> service lapses
+      assert.fail("should fail on empty escrow");
     } catch (e: any) {
-      assert.include(JSON.stringify(e), "RateLimitExceeded");
+      assert.include(JSON.stringify(e), "InsufficientFunds");
     }
   });
 
-  it("rejects an unauthorised puller", async () => {
-    const [m2] = PublicKey.findProgramAddressSync(
-      [Buffer.from("mandate"), payer.publicKey.toBuffer(), intruder.publicKey.toBuffer()],
-      program.programId
-    );
-    // intruder is not this mandate's provider -> the has_one / seeds check fails
+  it("rejects an unauthorised provider", async () => {
     try {
-      await program.methods
-        .pull(new BN(1))
-        .accounts({ provider: intruder.publicKey, mandate, providerTokenAccount: merchantAta })
-        .signers([intruder])
-        .rpc();
-      assert.fail("intruder should not be able to pull");
-      void m2;
+      await charge(intruder);
+      assert.fail("intruder should not be able to charge");
     } catch (e: any) {
-      assert.ok(e, "expected rejection for unauthorised provider");
+      assert.ok(e);
     }
   });
 
-  it("cancels: refunds the remainder and blocks further pulls", async () => {
+  it("cancels and refunds the unused months", async () => {
+    // top the subscription back up with 2 months, then quit
+    await program.methods
+      .fund(new BN(2 * PRICE))
+      .accounts({ owner: payer.publicKey, ownerTokenAccount: ownerAta })
+      .rpc();
+
     const ownerBefore = await balOf(ownerAta);
-    const escrowBefore = await balOf(escrow); // 0.5 USDC left
     await program.methods
       .cancel()
-      .accounts({ owner: payer.publicKey, mandate, ownerTokenAccount: ownerAta })
+      .accounts({ owner: payer.publicKey, ownerTokenAccount: ownerAta })
       .rpc();
 
     assert.equal((await balOf(escrow)).toString(), "0");
-    assert.equal((await balOf(ownerAta)).toString(), (ownerBefore + escrowBefore).toString());
+    assert.equal((await balOf(ownerAta)).toString(), (ownerBefore + BigInt(2 * PRICE)).toString());
+    const s = await program.account.subscription.fetch(sub);
+    assert.isFalse(s.active);
+  });
 
-    const m = await program.account.mandate.fetch(mandate);
-    assert.isFalse(m.active);
-
+  it("blocks charges after cancellation", async () => {
+    await sleep(1100);
     try {
-      await pull(1);
-      assert.fail("pull after cancel should fail");
+      await charge();
+      assert.fail("charge after cancel should fail");
     } catch (e: any) {
-      assert.include(JSON.stringify(e), "MandateInactive");
+      assert.include(JSON.stringify(e), "Inactive");
     }
   });
 });
