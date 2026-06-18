@@ -7,18 +7,21 @@ use anchor_spl::{
 // Placeholder. Run `anchor keys sync` after the first `anchor build`.
 declare_id!("11111111111111111111111111111111");
 
-// A trustless savings circle (esusu / ajo). Everyone funds a shared vault. Your points
-// grow with how MUCH and how OFTEN you contribute. When the vault crosses a minimum, the
-// front-of-queue member withdraws a slice sized by their share of total points — more than
-// they put in, but only a fraction of the pool, so the vault is never drained. Solvent by
-// construction: a withdrawal is always <= your proportional share <= the vault.
+// A trustless savings circle (esusu / ajo). Everyone funds a shared vault OVER TIME. Your
+// points grow with how MUCH and how OFTEN you contribute. When the vault crosses a minimum,
+// the front member withdraws a slice sized by their share of total points. Because the vault
+// is continuously replenished by ongoing contributions (the ajo assumption), a member can
+// withdraw MORE than they have put in so far — funded by the contribution STREAM, not by a
+// fixed pool. Size OR consistency each earn a winning share; only those who contribute little
+// AND infrequently fall below their contribution. Un-drainable by construction: any single
+// withdrawal is <= your (capped) share <= the vault. Honest risk: this holds while
+// contributions keep flowing; if the stream stops, the last claimants bear the shortfall.
 //
 // Behavioral tuning (see README): a 7-period streak at +10%/period (max 1.7x) rewards
 // consistency; the per-payout cap ALSO scales with streak, from 10% (one-off) to 33.3%
 // (fully consistent), so loyalty raises both your points and your withdrawal ceiling.
 const ALPHA_BPS: u64 = 1000; // +10% points per consecutive streak step
 const STREAK_MAX: u32 = 7; // streak multiplier caps at 1.7x
-const STREAK_MIN_CLAIM: u32 = 1; // must contribute >= 2 periods in a row before claiming
 const BETA_MIN_BPS: u128 = 1000; // one-off contributor: payout capped at 10% of the vault
 const BETA_MAX_BPS: u128 = 3333; // fully consistent (streak >= STREAK_MAX): up to 33.3%
 const SENTINEL: u64 = u64::MAX; // "never contributed"
@@ -100,8 +103,9 @@ pub mod circle {
     /// Front-of-queue withdrawal. Pays your share of the vault, capped at BETA_BPS of it.
     /// Requires the vault to be above v_min and the member to have been consistent.
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
+        // No consistency GATE: size OR timeframe both qualify. Consistency is rewarded
+        // (more points + a higher cap), not required to participate.
         require!(ctx.accounts.member.points > 0, CircleError::NoPoints);
-        require!(ctx.accounts.member.streak >= STREAK_MIN_CLAIM, CircleError::NotConsistent);
 
         let v = ctx.accounts.escrow.amount;
         require!(v >= ctx.accounts.circle.v_min, CircleError::BelowMinimum);
@@ -296,8 +300,6 @@ pub enum CircleError {
     InvalidParam,
     #[msg("Member has no points")]
     NoPoints,
-    #[msg("Not consistent enough to claim yet")]
-    NotConsistent,
     #[msg("Vault is below the minimum payout threshold")]
     BelowMinimum,
     #[msg("Math overflow")]

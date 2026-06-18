@@ -79,13 +79,15 @@ describe("circle (savings circle)", () => {
     assert.equal(b.points.toNumber(), 2_000_000, "Bob (one-off) gets points == dollars");
   });
 
-  it("rejects a claim from a one-off contributor (not consistent)", async () => {
-    try {
-      await program.methods.claim().accounts({ claimer: bob.publicKey, circle, owner: bob.publicKey, claimerTokenAccount: bobAta }).signers([bob]).rpc();
-      assert.fail("Bob has no streak; claim should fail");
-    } catch (e: any) {
-      assert.include(JSON.stringify(e), "NotConsistent");
-    }
+  it("lets a big one-off contributor claim too (size qualifies), throttled by the 10% cap", async () => {
+    const before = await bal(bobAta);
+    const vault = Number(await bal(escrow));
+    await program.methods.claim().accounts({ claimer: bob.publicKey, circle, owner: bob.publicKey, claimerTokenAccount: bobAta }).signers([bob]).rpc();
+    const paid = Number(await bal(bobAta)) - Number(before);
+    assert.isTrue(paid > 0, "a one-off can claim its share (no consistency gate)");
+    assert.isTrue(paid <= Math.ceil(vault * 0.1) + 1, "streak-0 one-off capped at 10% of the vault");
+    const b = await program.account.member.fetch(memberB);
+    assert.isTrue(b.points.toNumber() > 0, "residual points carry forward, not forfeited");
   });
 
   it("pays Alice her points-share, more than she put in, vault keeps the rest", async () => {

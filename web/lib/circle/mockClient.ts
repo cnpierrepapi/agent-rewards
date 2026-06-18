@@ -64,9 +64,9 @@ class MockCircleClient implements CircleClient {
   }
 
   private eligible(): Member[] {
-    return this.members
-      .filter((m) => m.points > 0 && m.streak >= 1)
-      .sort((a, b) => b.points - a.points);
+    // size OR consistency qualifies: anyone with points can claim (their share is
+    // sized by points and throttled by the streak-scaled cap)
+    return this.members.filter((m) => m.points > 0).sort((a, b) => b.points - a.points);
   }
 
   private snapshot(): CircleState {

@@ -67,12 +67,13 @@ export default function Home() {
     <main className="wrap">
       <h1>Esusu — a trustless savings circle</h1>
       <p className="sub">
-        Everyone funds a shared vault. Your points grow with how much and how often you contribute.
-        When the vault crosses {s ? usd(s.vMin) : "$15"}, the front of the queue withdraws a slice
-        sized by their share of points, more than they put in, but never enough to drain the pool.
-        Consistency pays twice: a 7-day streak lifts your points up to 1.7x AND raises your payout
-        cap from 10% to 33.3% of the vault; missing a day costs you 10%. The Solana program enforces
-        all of it.
+        Everyone keeps funding a shared vault over time. Your points grow with how much and how often
+        you contribute. When the vault crosses {s ? usd(s.vMin) : "$15"}, the front of the queue
+        withdraws a slice sized by their share of points. Because the pool is replenished by ongoing
+        contributions, you can take more than you have put in so far, funded by the stream, not a
+        fixed pot. Size OR consistency earns you a winning share; only the small-and-infrequent fall
+        behind. Consistency pays twice: a 7-day streak lifts points up to 1.7x AND raises your cap
+        from 10% to 33.3%. The Solana program enforces all of it.
       </p>
 
       {s?.youMissedLast && (
@@ -215,9 +216,9 @@ export default function Home() {
         On-chain (program <span className="mono">circle</span>): the vault is a PDA escrow; points
         accrue from amount × streak; <span className="mono">claim</span> pays{" "}
         <span className="mono">min(points/Σpoints · vault, β(streak) · vault)</span> where the cap
-        β rises with your streak from 10% to 33.3%, then resets you to the back. You can take more
-        than you contributed because consistency redistributes from the infrequent, and the pool can
-        never be drained because any payout is only a capped share of it.
+        β rises with your streak from 10% to 33.3%, then burns only the points you cashed out. You
+        can take more than you have put in so far because the vault is replenished by ongoing
+        contributions, and it can never be drained because any payout is only a capped share of it.
       </p>
     </main>
   );
