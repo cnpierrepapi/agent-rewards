@@ -24,11 +24,15 @@ Pin the toolchain; don't use "latest" blindly.
 ### 2. `lock file version 4 requires -Znext-lockfile-bump`
 - **Cause:** the system Cargo wrote `Cargo.lock` in **v4** format, but `cargo-build-sbf`'s bundled
   Cargo (Rust 1.75) only parses **v3**.
-- **Fix:** pin the lock header down:
+- **Fix (one-off):** pin the lock header down: `sed -i 's/^version = 4/version = 3/' Cargo.lock`
+  (v3/v4 carry identical data; only the header differs).
+- **Why `rm Cargo.lock` doesn't help / durable fix:** `cargo build-sbf` runs `cargo metadata` with
+  the **system** Cargo, and Cargo **≥ 1.83 defaults to lockfile v4**, so it regenerates v4 every
+  build. Make the system toolchain write v3 instead:
   ```bash
-  sed -i 's/^version = 4/version = 3/' Cargo.lock
+  rustup toolchain install 1.79.0 && rustup default 1.79.0   # v4 became default in Rust 1.83
   ```
-  (v3/v4 carry identical data; only the header differs. No dependency is downgraded.)
+  (The SBF *compile* still uses platform-tools Rust 1.75; the system toolchain only does resolution.)
 
 ### 3. `feature edition2024 is required` (e.g. `toml_datetime 1.1.1`)
 - **Cause:** a fresh resolve pulled newer *build-time* crates needing Rust 1.85; the SBF Rust is 1.75.
