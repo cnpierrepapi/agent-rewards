@@ -41,8 +41,27 @@ Pin the toolchain; don't use "latest" blindly.
   cargo update -p toml_edit --precise 0.22.22
   cargo update -p toml_datetime --precise 0.6.8
   ```
-  Cargo surfaces these one at a time; pin each it names. **A native program (`solana-program` +
-  `borsh` + `spl-token`) avoids this entirely** — it never pulls the toml tooling.
+  Cargo surfaces these one at a time; pin each it names (`zeroize`, `zeroize_derive`, `block-buffer`…).
+- **Don't whack-a-mole — kill the whole class:** use the **MSRV-aware resolver** so Cargo avoids
+  *every* dep needing a newer Rust automatically. In the crate manifest:
+  ```toml
+  [package]
+  rust-version = "1.75.0"
+  [workspace]            # (standalone crate)
+  resolver = "3"
+  ```
+  Then generate the lock with a **system Cargo >= 1.84** (the resolver needs it), pin the lock to
+  v3, fetch, and build offline so nothing re-resolves:
+  ```bash
+  rustup default stable          # cargo >= 1.84
+  rm -f Cargo.lock
+  cargo generate-lockfile        # MSRV resolver picks Rust-1.75-compatible deps
+  sed -i 's/^version = 4/version = 3/' Cargo.lock
+  cargo fetch --locked
+  CARGO_NET_OFFLINE=true cargo build-sbf -- --locked
+  ```
+  (Caveat: a dep only gets avoided if it *declares* its `rust-version`. Most edition2024 crates do;
+  any that don't still need a manual pin.)
 
 ### 4. Deploy cost quoted at ~6.8 SOL (only had ~2)
 - **Cause:** Anchor's binary floor (~250–450 KB no matter how little code) **×2** because upgradeable

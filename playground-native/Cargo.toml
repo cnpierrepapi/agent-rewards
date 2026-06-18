@@ -2,9 +2,15 @@
 name = "kzp_circle"
 version = "0.1.0"
 edition = "2021"
+# Declare our real toolchain ceiling so the MSRV-aware resolver auto-avoids any
+# dependency that requires a newer Rust (edition2024 crates), instead of us pinning
+# them one by one.
+rust-version = "1.75.0"
 
-# Stand alone — this crate is NOT part of the root Anchor workspace.
+# Stand alone — NOT part of the root Anchor workspace. resolver "3" = MSRV-aware
+# (needs a system Cargo >= 1.84 to generate the lock).
 [workspace]
+resolver = "3"
 
 [lib]
 crate-type = ["cdylib", "lib"]
