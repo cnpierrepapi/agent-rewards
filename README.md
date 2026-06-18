@@ -1,5 +1,8 @@
 # Esusu — a trustless savings circle on Solana
 
+**Live demo:** https://web-ten-liart-30.vercel.app
+
+
 A savings circle (esusu / ajo / tanda / ROSCA) implemented as a Solana program. Everyone funds a
 shared vault; your **points** grow with how much and how often you contribute; when the vault
 crosses a minimum, the front of the queue withdraws a **slice sized by their share of points** —
