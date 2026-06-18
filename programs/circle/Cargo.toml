@@ -1,12 +1,12 @@
 [package]
-name = "standing_order"
+name = "circle"
 version = "0.1.0"
-description = "A trustless standing order: the subscription that can't overcharge you"
+description = "A trustless savings circle (esusu/ajo): points-weighted payouts from a shared vault"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "standing_order"
+name = "circle"
 
 [features]
 default = []

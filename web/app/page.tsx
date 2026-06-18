@@ -2,205 +2,200 @@
 
 import { useEffect, useState } from "react";
 
-const USDC_DECIMALS = 6;
-const usdc = (base: number) => (base / 10 ** USDC_DECIMALS).toFixed(4);
+const USDC = 1_000_000;
+const usd = (b: number) => "$" + (b / USDC).toFixed(2);
+const mult = (streak: number) => (1 + 0.1 * Math.min(streak, 7)).toFixed(1) + "x";
 
-interface Charge {
-  period: number;
-  amount: number;
+interface Member {
+  id: string;
+  name: string;
+  you: boolean;
+  points: number;
+  streak: number;
+  contributed: number;
+}
+interface Payout {
+  round: number;
+  name: string;
+  contributed: number;
+  paidOut: number;
   remaining: number;
 }
-interface SubscriptionState {
-  active: boolean;
-  price: number;
-  escrowBalance: number;
-  monthsRemaining: number;
-  periodsCharged: number;
-  providerReceived: number;
-  atRisk: boolean;
-  charges: Charge[];
-}
-interface Draft {
-  industry: string;
-  city: string;
-  subject: string;
-  body: string;
-  model: string;
-  hasEmDash: boolean;
-}
-interface Lead {
-  name: string;
-  industry: string;
-  category: string;
-  area: string;
-  rating: number;
-  reviews: number;
-}
-interface PeriodResult {
-  charged: boolean;
-  reason?: string;
-  period?: number;
-  amount?: number;
-  leads?: Lead[];
-  drafts?: Draft[];
+interface CircleState {
+  period: number;
+  round: number;
+  vault: number;
+  pTotal: number;
+  vMin: number;
+  canPayout: boolean;
+  frontId: string | null;
+  youMissedLast: boolean;
+  members: Member[];
+  payouts: Payout[];
 }
 
 export default function Home() {
-  const [state, setState] = useState<SubscriptionState | null>(null);
-  const [lastRun, setLastRun] = useState<PeriodResult | null>(null);
-  const [refund, setRefund] = useState<{ refunded: number; monthsRefunded: number } | null>(null);
+  const [s, setS] = useState<CircleState | null>(null);
+  const [amount, setAmount] = useState(3);
   const [busy, setBusy] = useState(false);
 
-  const refresh = async () => setState(await (await fetch("/api/state")).json());
+  const refresh = async () => setS(await (await fetch("/api/state")).json());
   useEffect(() => {
     refresh();
   }, []);
 
-  const act = async (fn: () => Promise<void>) => {
+  const post = (url: string, body?: object) =>
+    fetch(url, {
+      method: "POST",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    }).then((r) => r.json());
+
+  const act = async (fn: () => Promise<CircleState>) => {
     setBusy(true);
-    await fn();
+    setS(await fn());
     setBusy(false);
   };
 
-  const fund = () =>
-    act(async () => {
-      setRefund(null);
-      await fetch("/api/fund", { method: "POST" });
-      await refresh();
-    });
-
-  const run = () =>
-    act(async () => {
-      const res: PeriodResult & { state: SubscriptionState } = await (
-        await fetch("/api/run", { method: "POST" })
-      ).json();
-      setLastRun(res);
-      setState(res.state);
-    });
-
-  const cancel = () =>
-    act(async () => {
-      const res = await (await fetch("/api/cancel", { method: "POST" })).json();
-      setRefund({ refunded: res.refunded, monthsRefunded: res.monthsRefunded });
-      setState(res.state);
-    });
-
-  const reset = () =>
-    act(async () => {
-      setLastRun(null);
-      setRefund(null);
-      setState(await (await fetch("/api/reset", { method: "POST" })).json());
-    });
-
-  const active = state?.active ?? false;
+  const you = s?.members.find((m) => m.you);
+  const sharePct = s && s.pTotal > 0 && you ? (you.points / s.pTotal) * 100 : 0;
+  const progress = s ? Math.min(100, (s.vault / s.vMin) * 100) : 0;
 
   return (
     <main className="wrap">
-      <h1>Standing Order</h1>
+      <h1>Esusu — a trustless savings circle</h1>
       <p className="sub">
-        The subscription you forgot to cancel, except you get your unused months back. Fund a few
-        months into an escrow you still own. The provider charges one fixed period at a time and
-        only delivers when paid. Forget about it and it can never take more than you funded, and the
-        moment you cancel, every month you prepaid but did not use is refunded. Demo provider: an AI
-        agent that finds Warsaw leads and writes Sonnet pitches for each paid period.
+        Everyone funds a shared vault. Your points grow with how much and how often you contribute.
+        When the vault crosses {s ? usd(s.vMin) : "$15"}, the front of the queue withdraws a slice
+        sized by their share of points, more than they put in, but never enough to drain the pool.
+        Consistency pays: a 7-day streak lifts your points up to 1.7x, and missing a day costs you
+        10%. The Solana program enforces all of it.
       </p>
 
-      {refund && (
-        <p className="note ok-note">
-          ✓ Cancelled. Refunded {usdc(refund.refunded)} USDC = {refund.monthsRefunded} unused
-          month(s) straight back to you.
-        </p>
-      )}
-      {active && state?.atRisk && (
+      {s?.youMissedLast && (
         <p className="note warn">
-          ⚠ RenewalAtRisk: escrow ({usdc(state.escrowBalance)} USDC) can&apos;t cover two more
-          periods. Fund more or the subscription lapses. On-chain this is an emitted event.
-        </p>
-      )}
-      {lastRun && !lastRun.charged && (
-        <p className="note warn">
-          Period not billed ({lastRun.reason}).{" "}
-          {lastRun.reason === "InsufficientFunds"
-            ? "Escrow is empty, so service lapsed. Fund to resume."
-            : "Subscription is cancelled."}
+          ⚠ You missed a period, so your points decayed 10% and your streak reset. Loss aversion is
+          the point: show up to keep your edge.
         </p>
       )}
 
       <div className="grid">
         <div className="card">
-          <div className="k">Months remaining</div>
-          <div className="v green">{state ? state.monthsRemaining : 0}</div>
+          <div className="k">Vault</div>
+          <div className="v">{s ? usd(s.vault) : "$0.00"}</div>
+          <div className="bar">
+            <div className="bar-fill" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="k" style={{ marginTop: 6 }}>
+            {progress >= 100 ? "payout unlocked" : `${usd(s ? s.vMin : 0)} to unlock`}
+          </div>
         </div>
         <div className="card">
-          <div className="k">Periods billed</div>
-          <div className="v">{state ? state.periodsCharged : 0}</div>
+          <div className="k">Your points</div>
+          <div className="v green">{you ? Math.round(you.points / 10000) / 100 : 0}</div>
+          <div className="k" style={{ marginTop: 6 }}>
+            streak {you?.streak ?? 0} ({mult(you?.streak ?? 0)}) · {sharePct.toFixed(1)}% of pool
+          </div>
         </div>
         <div className="card">
-          <div className="k">Your escrow</div>
-          <div className="v blue">{state ? usdc(state.escrowBalance) : "0.0000"}</div>
+          <div className="k">You put in</div>
+          <div className="v blue">{you ? usd(you.contributed) : "$0.00"}</div>
+          <div className="k" style={{ marginTop: 6 }}>
+            if you claimed now: {you && s && s.pTotal > 0
+              ? usd(Math.min(Math.floor((you.points * s.vault) / s.pTotal), Math.floor(0.5 * s.vault)))
+              : "$0.00"}
+          </div>
         </div>
       </div>
 
       <div className="row">
-        <button onClick={fund} disabled={busy || !active}>
-          Fund 3 months (0.3 USDC)
+        <input
+          type="range"
+          min={1}
+          max={10}
+          value={amount}
+          onChange={(e) => setAmount(Number(e.target.value))}
+          disabled={busy}
+        />
+        <button onClick={() => act(() => post("/api/contribute", { amount: amount * USDC }))} disabled={busy}>
+          Contribute ${amount}
         </button>
-        <button onClick={run} disabled={busy || !active} className="secondary">
-          {busy ? "Working..." : "Run billing period"}
+        <button onClick={() => act(() => post("/api/advance"))} disabled={busy} className="secondary">
+          Advance a day
         </button>
-        <button onClick={cancel} disabled={busy || !active} className="ghost">
-          Cancel &amp; refund
+        <button
+          onClick={() => act(() => post("/api/payout"))}
+          disabled={busy || !s?.canPayout}
+          className="secondary"
+        >
+          Trigger payout
         </button>
-        <button onClick={reset} disabled={busy} className="ghost">
+        <button onClick={() => act(() => post("/api/reset"))} disabled={busy} className="ghost">
           Reset
         </button>
       </div>
-
       <p className="note">
-        Price {state ? usdc(state.price) : "0.10"} USDC per period. The provider can charge at most
-        once per period and never more than the price, no matter how many times it asks.
+        Day {s?.period ?? 0} · {s?.payouts.length ?? 0} payouts so far. Contribute, then advance the
+        day to let the others contribute (some skip and lose points). Trigger a payout once the vault
+        is full.
       </p>
 
-      {lastRun?.charged && lastRun.drafts && (
-        <div className="section">
-          <h2>
-            Period {lastRun.period} delivered ({usdc(lastRun.amount ?? 0)} USDC) —{" "}
-            {lastRun.leads?.length ?? 0} Warsaw leads, {lastRun.drafts.length} pitches
-          </h2>
-          {lastRun.drafts.map((d) => (
-            <div className="draft" key={d.industry}>
-              <span className="ind">{d.industry}</span>
-              <span className="badge">{d.model}</span>
-              {!d.hasEmDash && <span className="badge ok">no em dash</span>}
-              <div className="body">
-                <strong>{d.subject}</strong>
-                <br />
-                {d.body}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="section">
+        <h2>The circle</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Points</th>
+              <th>Streak</th>
+              <th>Put in</th>
+              <th>Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s?.members.map((m) => (
+              <tr key={m.id} className={m.id === s.frontId ? "front" : m.you ? "self" : ""}>
+                <td>
+                  {m.name}
+                  {m.id === s.frontId && <span className="badge ok">next</span>}
+                </td>
+                <td className="reward">{Math.round(m.points / 10000) / 100}</td>
+                <td className="mono">
+                  {m.streak} ({mult(m.streak)})
+                </td>
+                <td className="mono">{usd(m.contributed)}</td>
+                <td className="mono">
+                  {s.pTotal > 0 ? ((m.points / s.pTotal) * 100).toFixed(1) : "0.0"}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="section">
-        <h2>Billing history</h2>
-        {!state || state.charges.length === 0 ? (
-          <div className="empty">No periods billed yet.</div>
+        <h2>Payouts</h2>
+        {!s || s.payouts.length === 0 ? (
+          <div className="empty">No payouts yet. Fill the vault to {s ? usd(s.vMin) : "$15"}.</div>
         ) : (
           <table>
             <thead>
               <tr>
-                <th>Period</th>
-                <th>Charged (USDC)</th>
-                <th>Escrow after</th>
+                <th>#</th>
+                <th>Member</th>
+                <th>Put in</th>
+                <th>Took out</th>
+                <th>Vault left</th>
               </tr>
             </thead>
             <tbody>
-              {state.charges.map((c) => (
-                <tr key={c.period}>
-                  <td className="mono">{c.period}</td>
-                  <td className="reward">{usdc(c.amount)}</td>
-                  <td className="mono">{usdc(c.remaining)}</td>
+              {s.payouts.map((p) => (
+                <tr key={p.round}>
+                  <td className="mono">{p.round}</td>
+                  <td>{p.name}</td>
+                  <td className="mono">{usd(p.contributed)}</td>
+                  <td className="reward">{usd(p.paidOut)}</td>
+                  <td className="mono">{usd(p.remaining)}</td>
                 </tr>
               ))}
             </tbody>
@@ -209,12 +204,11 @@ export default function Home() {
       </div>
 
       <p className="note">
-        On-chain (program <span className="mono">standing_order</span>): escrow lives in a PDA you
-        control; <span className="mono">charge</span> fires at most once per period and only up to
-        the price; <span className="mono">cancel</span> refunds the unused months; events{" "}
-        <span className="mono">Charged</span> / <span className="mono">RenewalAtRisk</span> /{" "}
-        <span className="mono">SubscriptionCancelled</span> are emitted. This page runs that logic in
-        memory; set <span className="mono">ANTHROPIC_API_KEY</span> for real Sonnet pitches.
+        On-chain (program <span className="mono">circle</span>): the vault is a PDA escrow; points
+        accrue from amount × streak; <span className="mono">claim</span> pays{" "}
+        <span className="mono">min(points/Σpoints · vault, 50% · vault)</span> then resets you to the
+        back. You can take more than you contributed because consistency redistributes from the
+        infrequent, and the pool can never be drained because any payout is only a share of it.
       </p>
     </main>
   );

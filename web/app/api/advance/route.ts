@@ -2,6 +2,5 @@ import { NextResponse } from "next/server";
 import { circle } from "@/lib/circle/mockClient";
 
 export async function POST() {
-  await circle.reset();
-  return NextResponse.json(await circle.getState());
+  return NextResponse.json(await circle.advance());
 }

@@ -1,98 +1,89 @@
-# Standing Order — the subscription that can't overcharge you
+# Esusu — a trustless savings circle on Solana
 
-A trustless recurring subscription implemented as a Solana program: the one you forgot to cancel,
-except you get your unused months back. You fund an escrow with one or more periods up front and
-authorise a provider to collect a fixed `price` per period. The **program**, not the merchant,
-enforces the cadence and amount, keeps custody of your prepaid funds, and lets you cancel and reclaim
-every period you funded but never used.
-
-> **Demo client:** an autonomous outreach agent acts as the "merchant". It fetches real Warsaw
-> businesses, drafts per-industry pitches with Claude Sonnet, and meters its work by pulling tiny
-> payments from the mandate — but it can never pull more than the cap you set.
-
----
+A savings circle (esusu / ajo / tanda / ROSCA) implemented as a Solana program. Everyone funds a
+shared vault; your **points** grow with how much and how often you contribute; when the vault
+crosses a minimum, the front of the queue withdraws a **slice sized by their share of points** —
+**more than they put in, but never enough to drain the pool.** Solvent by construction.
 
 ## The everyday friction (traditional systems)
 
-Subscriptions, direct debits, and standing orders all share the same three problems:
-
-1. **You give up custody.** The merchant holds a payment instrument and pulls when they like.
-2. **You trust them not to overcharge.** Caps, if any, live in the merchant's billing system.
-3. **Cancelling is hard.** You chase support, and refunds of prepaid balances are slow or never.
-
-The control sits with the party taking your money. That is backwards.
-
-**Concrete case:** Grammarly charges the full ~$30 up front. Stop using it the next day and that
-$30 is gone, there is no refund of the unused portion, and any "credit" expires on their terms. You
-prepaid for a year of value and they captured all of it on day one. What you actually want: pay once
-into an account you still own, let them draw only as they serve you, keep the unused balance (it
-should roll over, not expire), and reclaim every cent you did not use the moment you cancel.
+Hundreds of millions of people run informal savings circles. They work socially but fail
+structurally: you must **trust the organizer** not to abscond with the pot, **trust members** to
+keep paying after they have collected, and there is **no enforcement** when someone stops. The
+whole thing rests on personal trust and breaks at scale or across strangers.
 
 ## How this works on Solana
 
 | Friction | On-chain guarantee |
 |----------|--------------------|
-| Custody  | Funds sit in a **PDA escrow** the payer controls; the provider never holds them. |
-| Overcharging | `charge` collects the fixed `price` **at most once per `period_secs`** — the cadence and amount are enforced by the program, not the merchant. |
-| Forgotten subscription | It can never take more than you funded; charges simply stop when the escrow runs dry. |
-| Cancelling | `cancel` deactivates the subscription and **refunds every funded-but-uncharged period in one transaction**. The Grammarly months you never used come straight back. |
-| Visibility | Every `charge` emits `Charged`; when the escrow can't cover the next period it emits **`RenewalAtRisk`**, and `cancel` emits `SubscriptionCancelled`. |
+| Organizer holds the pot | Funds live in a **PDA escrow**; no person ever has custody. |
+| "Can I take more than I put in?" | Yes — your payout is `points/Σpoints · vault`, and points are lifted by your streak, so a consistent member withdraws more than they contributed. |
+| "Won't that drain the vault?" | No — a payout is only a **share** of the pool (capped at 50%), so `withdrawal ≤ your share ≤ vault`. **Un-drainable by arithmetic.** |
+| Freeloaders / quitters | Points only come from real contributions; miss a period and your points decay and your streak resets. |
 
-Permissionless: anyone can open a mandate; a provider is just a pubkey. Token-native: settlement
-is in USDC. Trustless where it counts: the payer never has to trust the merchant on price, cap,
-custody, or cancellation.
+Permissionless (anyone opens or joins a circle), token-native (USDC), and trustless where it
+counts: nobody trusts an organizer, and the vault cannot be over-drawn.
+
+## The mechanism (and the psychology behind the numbers)
+
+```
+contribute:  points += amount × (1 + 0.10 · min(streak, 7))   // up to 1.7×
+miss a period:  streak → 0,  points × 0.9                       // loss-aversion decay
+payout (front of queue, when vault ≥ V_min):
+             W = min( points / Σpoints · vault ,  0.5 · vault )
+             then points → 0, rotate to the back
+```
+
+- **Streak +10%/period capped at 7 (1.7×).** Habit-formation research (and every streak app) shows
+  consistency is driven by an unbroken, visible chain on a roughly weekly loop. 1.7× also reproduces
+  the canonical example: ~$9 contributed → ~$15 collected.
+- **10% decay on a miss.** Loss aversion (losses ≈ 2× gains) is the strongest motivator here —
+  people show up to avoid *losing* standing. 10% stings but is recoverable, so a slip doesn't cause
+  a rage-quit.
+- **50% payout cap (β).** Keeps the vault visibly solvent, which itself increases contribution.
+- **V_min + time backstop.** The goal-gradient effect: a visible target drives a contribution surge.
 
 ## Account model
 
-- **`Subscription`** (PDA, seeds `["sub", owner, provider]`) — owner, provider, mint, `price`,
-  `period_secs`, `next_charge_ts`, `periods_charged`, `active`.
-- **`escrow`** — an associated token account owned by the `Subscription` PDA; holds the prepaid USDC.
-- Instructions: `open_subscription`, `fund` (deposit periods ahead), `charge` (provider-signed, one
-  period per `period_secs`, emits events), `cancel` (owner-signed, refunds unused periods + deactivates).
-- Events: `Charged`, `RenewalAtRisk`, `SubscriptionCancelled`.
-
-The cadence is a `next_charge_ts` gate advanced by `period_secs` on each charge — no cranks, no clock
-keeper.
+- **`Circle`** (PDA, seeds `["circle", authority]`) — authority, mint, `v_min`, `period_secs`,
+  `start_ts`, `p_total`, `round`.
+- **`Member`** (PDA, seeds `["member", circle, owner]`) — points, streak, last_period, contributed.
+- **`escrow`** — associated token account owned by the `Circle` PDA; holds the pooled USDC.
+- Instructions: `open_circle`, `join`, `contribute` (points = amount × streak-multiplier),
+  `claim` (points-share payout, capped, resets the member). Event: `Payout`.
 
 ## Tradeoffs & constraints (honest scope)
 
-- **The program guarantees price, cap, custody, and cancellation — not the truth of the work.**
-  The provider still reports *what* was delivered (a metered unit, a task). The chain bounds how
-  much they can take; it does not verify the off-chain service. Fully removing that trust would
-  require the service itself to be on-chain-verifiable.
-- **No on-chain scheduler.** Solana programs can't self-trigger; the provider (or a keeper) sends the
-  `charge` transaction each period. The program guarantees it can't be early, double-charged, or over
-  the price — not that it fires on its own. This is honest and standard for Solana.
-- **Fixed price per period from prepaid escrow.** Minimal by design (zero feature-creep). The only
-  capital at risk is what the payer funded, and `cancel` returns the unused part.
-- **One subscription per (owner, provider) pair.** Deterministic PDA; a second provider is a second subscription.
+- **It redistributes; it is not a money machine.** The "more than you put in" for a frequent member
+  is funded by the infrequent members' contributions — a deliberate consistency reward, conserved
+  within the pool. It is explicitly **not** paid by newcomers (that would be a Ponzi and would die in
+  a contribution downturn). Total out ≤ total in, always.
+- **Queue ordering is client-computed; the *amount* is trustless.** The program guarantees nobody can
+  take more than their capped share; which eligible member collects next is chosen off-chain (and can
+  be made fully on-chain later). No oracle is involved in the money.
+- **Decay lives in the client today.** On-chain `contribute`/`claim` enforce the streak multiplier and
+  the share cap; the inactivity decay is applied in the UX layer and is a documented v2 on-chain step
+  (lazy per-member decay keeps `p_total` exact).
+- **No scheduler.** Payouts are triggered by a transaction (any member), not a timer.
 
 ## Devnet
 
 - Program ID: `<filled after deploy>`
-- Example transactions:
-  - open + fund: `<tx link>`
-  - charge (period 1): `<tx link>`
-  - charge rejected (not due yet): `<tx link>`
-  - cancel + refund unused months: `<tx link>`
+- Example transactions: open + join `<tx>` · contribute (streak) `<tx>` · claim (more than contributed) `<tx>` · claim rejected below V_min `<tx>`
 
 ## Run it
 
-**Program (in a Codespace or Linux):**
+**Program (Codespace or Linux):**
 ```bash
 npm install
-anchor build
-anchor keys sync     # set the real program id
-anchor test          # opens, funds, charges per period, rejects early/empty/unauthorised, cancels+refunds
+anchor build && anchor keys sync && anchor build
+anchor test          # join, streak-weighted points, share payout > contribution, rejections
 anchor deploy --provider.cluster devnet
 ```
 
-**Client (the demo merchant):**
+**Client demo:**
 ```bash
-cd web
-npm install
-npm run dev          # http://localhost:3000
+cd web && npm install && npm run dev    # http://localhost:3000
 ```
-Set `ANTHROPIC_API_KEY` for real Sonnet pitches; without it the agent uses a built-in template.
 
 Devnet only. Unaudited. Built for the "Everyday Real-World Systems as On-Chain Rust Programs" challenge.

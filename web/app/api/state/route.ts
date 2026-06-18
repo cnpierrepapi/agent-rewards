@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { subscription } from "@/lib/mandate/mockClient";
+import { circle } from "@/lib/circle/mockClient";
 
 export async function GET() {
-  return NextResponse.json(await subscription.getState());
+  return NextResponse.json(await circle.getState());
 }

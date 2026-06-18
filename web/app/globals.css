@@ -43,3 +43,8 @@ td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fo
 .empty { color: var(--muted); font-size: 14px; padding: 16px 0; }
 .ok-note { color: var(--accent); font-size: 13px; margin-top: 10px; line-height: 1.5; }
 .badge.warnbadge { color: var(--warn); border-color: #5a4a1f; }
+.bar { height: 6px; background: var(--line); border-radius: 999px; margin-top: 10px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); transition: width .3s; }
+tr.front { background: rgba(74,222,128,0.10); }
+tr.self { background: rgba(96,165,250,0.07); }
+input[type=range] { flex: 1; min-width: 120px; max-width: 220px; accent-color: var(--accent2); }
