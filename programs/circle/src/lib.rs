@@ -136,19 +136,25 @@ pub mod circle {
             w,
         )?;
 
+        // Burn ONLY the points actually paid out. If the cap clipped the payout, the
+        // residual points carry to the next round instead of being forfeited — so a large
+        // claim is spread across rounds, never confiscated.
+        let points_burned = ((w as u128) * p_total / (v as u128)).min(points);
         let key = ctx.accounts.circle.key();
         let contributed = ctx.accounts.member.contributed;
         {
             let c = &mut ctx.accounts.circle;
-            c.p_total = c.p_total.saturating_sub(points);
+            c.p_total = c.p_total.saturating_sub(points_burned);
             c.round = c.round.saturating_add(1);
         }
         {
             let m = &mut ctx.accounts.member;
-            m.points = 0;
-            m.streak = 0;
-            m.last_period = SENTINEL;
-            m.contributed = 0;
+            m.points = m.points.saturating_sub(points_burned);
+            m.streak = 0; // rotate to the back: rebuild a streak before claiming again
+            if m.points == 0 {
+                m.last_period = SENTINEL;
+                m.contributed = 0;
+            }
         }
 
         emit!(Payout {

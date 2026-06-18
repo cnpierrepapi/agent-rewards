@@ -123,6 +123,8 @@ class MockCircleClient implements CircleClient {
     const share = Math.floor((front.points * this.vault) / this.pTotal);
     const cap = Math.floor((betaBps(front.streak) * this.vault) / 10_000);
     const w = Math.min(share, cap);
+    // burn only the points actually paid out; residual carries forward (no forfeiture)
+    const burned = Math.min(Math.floor((w * this.pTotal) / this.vault), front.points);
     const p: Payout = {
       round: this.round + 1,
       name: front.name,
@@ -132,11 +134,13 @@ class MockCircleClient implements CircleClient {
     };
     this.payouts.push(p);
     this.vault -= w;
-    this.pTotal -= front.points;
-    front.points = 0;
+    this.pTotal -= burned;
+    front.points -= burned;
     front.streak = 0;
-    front.contributed = 0;
-    front.lastPeriod = -1;
+    if (front.points === 0) {
+      front.contributed = 0;
+      front.lastPeriod = -1;
+    }
     this.round += 1;
     return this.snapshot();
   }
