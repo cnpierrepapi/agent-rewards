@@ -1,7 +1,9 @@
-import { CircleClient, CircleState, Member } from "./types";
+import { CircleClient, CircleState, DepositEvent, Member } from "./types";
 import { PARAMS, USDC } from "./schedule";
 
 const SIM_NAMES = ["Ada", "Bola", "Chidi", "Dapo", "Emeka", "Funke"];
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const mockSig = () => Array.from({ length: 44 }, () => B58[Math.floor(Math.random() * B58.length)]).join("");
 
 // Deposit cascade: each deposit splits 50% DOWN to earlier members (by share) and 50% UP,
 // gifted to the very next depositor. The first member's down-half goes to a locked floor.
@@ -11,6 +13,7 @@ class MockCascadeClient implements CircleClient {
   private upReserve = 0;
   private nextOrder = 1;
   private simIdx = 0;
+  private events: DepositEvent[] = [];
   private members: Member[] = [
     { id: "you", name: "You", you: true, order: 0, deposited: 0, balance: 0, withdrawn: 0 },
   ];
@@ -42,6 +45,8 @@ class MockCascadeClient implements CircleClient {
 
     m.deposited += amount;
     this.poolTotal += amount;
+    this.events.unshift({ actor: m.name, amount, sig: mockSig() });
+    if (this.events.length > 14) this.events.pop();
   }
 
   private snapshot(): CircleState {
@@ -52,6 +57,7 @@ class MockCascadeClient implements CircleClient {
       upReserve: this.upReserve,
       members: [...joined].sort((a, b) => (a.order || 99) - (b.order || 99)),
       you: this.members.find((m) => m.you) ?? null,
+      events: this.events.slice(0, 14),
     };
   }
 
@@ -91,6 +97,7 @@ class MockCascadeClient implements CircleClient {
     this.upReserve = 0;
     this.nextOrder = 1;
     this.simIdx = 0;
+    this.events = [];
     this.members = [
       { id: "you", name: "You", you: true, order: 0, deposited: 0, balance: 0, withdrawn: 0 },
     ];
