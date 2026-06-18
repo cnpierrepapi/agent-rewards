@@ -1,12 +1,12 @@
 [package]
-name = "agent_rewards"
+name = "standing_order"
 version = "0.1.0"
-description = "USDC escrow that pays an AI agent for cryptographically-attested work"
+description = "A trustless standing order: the subscription that can't overcharge you"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "agent_rewards"
+name = "standing_order"
 
 [features]
 default = []

@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-agent_rewards = "11111111111111111111111111111111"
+standing_order = "11111111111111111111111111111111"
 
 [programs.devnet]
-agent_rewards = "11111111111111111111111111111111"
+standing_order = "11111111111111111111111111111111"
 
 [registry]
 url = "https://api.apr.dev"
