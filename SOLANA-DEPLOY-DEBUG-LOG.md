@@ -41,27 +41,35 @@ Pin the toolchain; don't use "latest" blindly.
   cargo update -p toml_edit --precise 0.22.22
   cargo update -p toml_datetime --precise 0.6.8
   ```
-  Cargo surfaces these one at a time; pin each it names (`zeroize`, `zeroize_derive`, `block-buffer`…).
-- **Don't whack-a-mole — kill the whole class:** use the **MSRV-aware resolver** so Cargo avoids
-  *every* dep needing a newer Rust automatically. In the crate manifest:
+  Cargo surfaces these one at a time. **Manual pinning is a trap** — each fix lets the resolver grab
+  the next edition2024 crate (`zeroize_derive` → `block-buffer` → `ahash` → …). It also has its own
+  sub-traps: pinning `zeroize` to `1.7.0` broke because `curve25519-dalek 3.2.1` requires `<1.4`, and
+  `zeroize_derive 1.3.0` is **yanked** (use `1.4.2`). Don't go down this road.
+- **Kill the whole class with the MSRV-aware resolver.** Declare the toolchain ceiling and Cargo
+  downgrades *every* dep that needs a newer Rust, in one resolve. **Do NOT put `resolver = "3"` in
+  the manifest** — the SBF toolchain's old Cargo (1.75) also parses the manifest and only knows
+  resolver "1"/"2", so it errors. Use a **config file** instead (older Cargo ignores the unknown key):
   ```toml
+  # Cargo.toml
   [package]
   rust-version = "1.75.0"
-  [workspace]            # (standalone crate)
-  resolver = "3"
+
+  # .cargo/config.toml
+  [resolver]
+  incompatible-rust-versions = "fallback"
   ```
-  Then generate the lock with a **system Cargo >= 1.84** (the resolver needs it), pin the lock to
-  v3, fetch, and build offline so nothing re-resolves:
+  Then: resolve with a **system Cargo >= 1.84**, pin the lock to v3, and build **online with
+  `--locked`** (not `--offline` — fetch only caches host-target crates, so the SBF build still needs
+  the network; `--locked` is what freezes the resolution):
   ```bash
-  rustup default stable          # cargo >= 1.84
+  rustup default stable          # cargo >= 1.84 for the MSRV resolver
   rm -f Cargo.lock
-  cargo generate-lockfile        # MSRV resolver picks Rust-1.75-compatible deps
+  cargo generate-lockfile        # picks Rust-1.75-compatible deps automatically
   sed -i 's/^version = 4/version = 3/' Cargo.lock
-  cargo fetch --locked
-  CARGO_NET_OFFLINE=true cargo build-sbf -- --locked
+  cargo build-sbf -- --locked    # online; --locked = no re-resolve, no v4 re-bump
   ```
-  (Caveat: a dep only gets avoided if it *declares* its `rust-version`. Most edition2024 crates do;
-  any that don't still need a manual pin.)
+  Two-toolchain rule: **Cargo >= 1.84 to resolve, platform-tools 1.75 to compile.** (Caveat: a dep is
+  only auto-avoided if it *declares* `rust-version`; the rare one that doesn't still needs a pin.)
 
 ### 4. Deploy cost quoted at ~6.8 SOL (only had ~2)
 - **Cause:** Anchor's binary floor (~250–450 KB no matter how little code) **×2** because upgradeable
